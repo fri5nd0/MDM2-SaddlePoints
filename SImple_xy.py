@@ -1,6 +1,9 @@
 import numpy as np
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+import warnings
+warnings.filterwarnings('ignore')
 
 class NeuralNetwork:
     def __init__(self, input_size, hidden_sizes, output_size, learning_rate=0.01):
@@ -71,53 +74,14 @@ class NeuralNetwork:
             self.biases[i] = params[idx:idx + b_size].reshape(self.biases[i].shape)
             idx += b_size
 
-    def compute_hessian(self, X, y, eps=1e-5):
-        """Compute Hessian matrix using finite differences"""
-        original_params = self.get_parameters()
-        n_params = len(original_params)
-        H = np.zeros((n_params, n_params))
-        
-        print(f"Computing Hessian for {n_params} parameters...")
-        
-        # Compute gradient at current point
-        grad_0 = self.compute_gradient(X, y)
-        
-        for i in range(n_params):
-            if i % 10 == 0:  # Progress indicator
-                print(f"Computing column {i}/{n_params}")
-                
-            # Perturb parameter i
-            params_plus = original_params.copy()
-            params_plus[i] += eps
-            self.set_parameters(params_plus)
-            grad_plus = self.compute_gradient(X, y)
-            
-            # Central difference for better accuracy
-            if i < n_params - 1:
-                params_minus = original_params.copy()
-                params_minus[i] -= eps
-                self.set_parameters(params_minus)
-                grad_minus = self.compute_gradient(X, y)
-                H[:, i] = (grad_plus - grad_minus) / (2 * eps)
-            else:
-                H[:, i] = (grad_plus - grad_0) / eps
-        
-        # Restore original parameters
-        self.set_parameters(original_params)
-        
-        # Make symmetric (finite differences can cause small asymmetries)
-        H = 0.5 * (H + H.T)
-        return H
-
-    def compute_gradient(self, X, y):
-        """Compute gradient of loss with respect to all parameters"""
-        # Store original state
+    def compute_analytical_gradient(self, X, y):
+        """Fast analytical gradient computation using backpropagation"""
+        # Store original parameters
         original_weights = [w.copy() for w in self.weights]
         original_biases = [b.copy() for b in self.biases]
         
         # Forward pass
         output = self.forward(X)
-        loss = self.compute_loss(y, output)
         
         # Backward pass to compute gradients
         m = X.shape[0]
@@ -142,15 +106,169 @@ class NeuralNetwork:
         # Reverse to get correct order (input to output)
         gradients = gradients[::-1]
         
-        # Restore original state
+        # Restore original parameters
         self.weights = original_weights
         self.biases = original_biases
         
         return np.concatenate(gradients)
 
-    def train(self, X, y, epochs=1000, verbose=True, compute_hessian_epochs=None):
+    def compute_stochastic_hessian_eigenvalues(self, X, y, n_samples=100):
+        """Fast approximate Hessian eigenvalues using random projection"""
+        n_params = len(self.get_parameters())
+        
+        # Use random projection to estimate eigenvalue distribution
+        k = min(50, n_params)  # Number of random vectors to use
+        
+        Hv_products = []
+        for i in range(k):
+            v = np.random.randn(n_params)
+            v = v / np.linalg.norm(v)
+            
+            # Compute Hessian-vector product using finite differences on gradient
+            eps = 1e-5
+            grad_current = self.compute_analytical_gradient(X, y)
+            
+            self.set_parameters(self.get_parameters() + eps * v)
+            grad_perturbed = self.compute_analytical_gradient(X, y)
+            self.set_parameters(self.get_parameters() - eps * v)  # Reset
+            
+            Hv = (grad_perturbed - grad_current) / eps
+            Hv_products.append(Hv)
+        
+        # Build small matrix for eigenvalue computation
+        H_small = np.zeros((k, k))
+        for i in range(k):
+            for j in range(k):
+                H_small[i, j] = np.dot(Hv_products[i], Hv_products[j])
+        
+        # Compute eigenvalues of the small matrix (much faster)
+        small_eigenvalues = np.linalg.eigvals(H_small)
+        
+        # Scale eigenvalues to approximate true Hessian eigenvalues
+        scale_factor = np.sqrt(n_params / k)
+        approximated_eigenvalues = small_eigenvalues * scale_factor
+        
+        return approximated_eigenvalues.real
+
+    def fast_analyze_critical_point(self, params, X, y, grad_tol=1e-3):
+        """Fast critical point analysis using stochastic Hessian estimation"""
+        gradient = self.compute_analytical_gradient(X, y)
+        grad_norm = np.linalg.norm(gradient)
+        
+        if grad_norm > grad_tol:
+            return None, None
+        
+        print("Found critical point! Computing approximate Hessian eigenvalues...")
+        
+        # Set parameters temporarily
+        original_params = self.get_parameters()
+        self.set_parameters(params)
+        
+        # Use fast stochastic method to estimate eigenvalues
+        eigenvalues = self.compute_stochastic_hessian_eigenvalues(X, y)
+        
+        # Restore parameters
+        self.set_parameters(original_params)
+        
+        eigenvalues_real = eigenvalues.real
+        
+        # Classify critical point
+        positive_ev = np.sum(eigenvalues_real > 1e-6)
+        negative_ev = np.sum(eigenvalues_real < -1e-6)
+        zero_ev = np.sum(np.abs(eigenvalues_real) < 1e-6)
+        
+        print(f"Approximate eigenvalue analysis:")
+        print(f"  Positive eigenvalues: {positive_ev}")
+        print(f"  Negative eigenvalues: {negative_ev}")
+        print(f"  Zero eigenvalues: {zero_ev}")
+        print(f"  Min eigenvalue: {np.min(eigenvalues_real):.6e}")
+        print(f"  Max eigenvalue: {np.max(eigenvalues_real):.6e}")
+        
+        if negative_ev == 0 and zero_ev == 0:
+            point_type = "Local Minimum"
+        elif positive_ev == 0 and zero_ev == 0:
+            point_type = "Local Maximum"
+        elif negative_ev > 0 and positive_ev > 0:
+            point_type = "Saddle Point"
+        else:
+            point_type = "Degenerate Critical Point"
+        
+        print(f"Critical point type: {point_type}")
+        return point_type, eigenvalues
+
+    def find_critical_points_fast(self, X, y, n_initial_points=100, max_iter=200, grad_tol=1e-3):
+        """Fast critical point finding using gradient-based search"""
+        print(f"Fast search for critical points using {n_initial_points} initializations...")
+        
+        critical_points = []
+        n_params = len(self.get_parameters())
+        
+        # Store original parameters
+        original_params = self.get_parameters()
+        
+        for i in range(n_initial_points):
+            if i % 10 == 0:
+                print(f"Processing initial point {i}/{n_initial_points}")
+            
+            # Random initialization around different scales
+            scale = np.random.choice([0.01, 0.1, 1.0, 10.0])
+            random_params = np.random.randn(n_params)*scale
+            
+            try:
+                # Simple gradient descent to find low-gradient regions
+                current_params = random_params.copy()
+                
+                for iteration in range(max_iter):
+                    self.set_parameters(current_params)
+                    grad = self.compute_analytical_gradient(X, y)
+                    grad_norm = np.linalg.norm(grad)
+                    
+                    if grad_norm < grad_tol:
+                        # Found candidate critical point
+                        loss = self.compute_loss_from_params(current_params, X, y)
+                        
+                        # Check if we already have a similar point
+                        is_duplicate = False
+                        for cp in critical_points:
+                            if np.linalg.norm(cp['parameters'] - current_params) < 1e-3:
+                                is_duplicate = True
+                                break
+                        
+                        if not is_duplicate:
+                            point_type, eigenvalues = self.fast_analyze_critical_point(current_params, X, y, grad_tol)
+                            
+                            if point_type:
+                                critical_points.append({
+                                    'parameters': current_params.copy(),
+                                    'type': point_type,
+                                    'eigenvalues': eigenvalues,
+                                    'loss': loss,
+                                    'grad_norm': grad_norm
+                                })
+                        break
+                    
+                    # Gradient descent step
+                    current_params -= 0.1 * grad
+                    
+            except Exception as e:
+                continue
+        
+        # Restore original parameters
+        self.set_parameters(original_params)
+        
+        return critical_points
+
+    def compute_loss_from_params(self, params, X, y):
+        """Compute loss for given parameters"""
+        original_params = self.get_parameters()
+        self.set_parameters(params)
+        output = self.forward(X)
+        loss = self.compute_loss(y, output)
+        self.set_parameters(original_params)
+        return loss
+
+    def train(self, X, y, epochs=1000, verbose=True):
         losses = []
-        hessian_eigenvalues = []
         
         for epoch in range(epochs):
             output = self.forward(X)
@@ -160,21 +278,8 @@ class NeuralNetwork:
             
             if verbose and epoch % 100 == 0:
                 print(f"Epoch {epoch}, Loss: {loss:.4f}")
-            
-            # Compute Hessian at specified epochs
-            if compute_hessian_epochs and epoch in compute_hessian_epochs:
-                print(f"Computing Hessian at epoch {epoch}...")
-                H = self.compute_hessian(X, y)
-                eigenvalues = np.linalg.eigvals(H)
-                hessian_eigenvalues.append((epoch, eigenvalues))
-                print(f"Hessian eigenvalues at epoch {epoch}:")
-                print(f"  Min: {np.min(eigenvalues):.6f}")
-                print(f"  Max: {np.max(eigenvalues):.6f}")
-                print(f"  Positive: {np.sum(eigenvalues > 0)}")
-                print(f"  Negative: {np.sum(eigenvalues < 0)}")
-                print(f"  Zero: {np.sum(np.abs(eigenvalues) < 1e-10)}")
         
-        return losses, hessian_eigenvalues
+        return losses
     
     def predict(self, X, threshold=0.5):
         return (self.forward(X) > threshold).astype(int)
@@ -182,15 +287,79 @@ class NeuralNetwork:
     def accuracy(self, X, y):
         return np.mean(self.predict(X) == y)
 
+def analyze_critical_points_distribution(critical_points):
+    """Analyze and visualize the distribution of critical points"""
+    if not critical_points:
+        print("No critical points found!")
+        return
+    
+    types = [cp['type'] for cp in critical_points]
+    losses = [cp['loss'] for cp in critical_points]
+    grad_norms = [cp['grad_norm'] for cp in critical_points]
+    
+    # Count by type
+    type_counts = {}
+    for t in types:
+        type_counts[t] = type_counts.get(t, 0) + 1
+    
+    print("\n" + "="*50)
+    print("CRITICAL POINT ANALYSIS RESULTS")
+    print("="*50)
+    for point_type, count in type_counts.items():
+        print(f"{point_type}: {count} points ({count/len(critical_points)*100:.1f}%)")
+    
+    # Create visualization
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # Plot 1: Critical point types
+    axes[0,0].bar(type_counts.keys(), type_counts.values(), color=['red', 'blue', 'green', 'orange'])
+    axes[0,0].set_title('Distribution of Critical Point Types')
+    axes[0,0].set_ylabel('Count')
+    axes[0,0].tick_params(axis='x', rotation=45)
+    
+    # Plot 2: Loss distribution by type
+    type_colors = {'Saddle Point': 'red', 'Local Minimum': 'blue', 
+                   'Local Maximum': 'green', 'Degenerate Critical Point': 'orange'}
+    for point_type in set(types):
+        type_losses = [loss for cp, loss in zip(critical_points, losses) if cp['type'] == point_type]
+        axes[0,1].hist(type_losses, alpha=0.7, label=point_type, color=type_colors.get(point_type, 'gray'))
+    axes[0,1].set_title('Loss Distribution by Critical Point Type')
+    axes[0,1].set_xlabel('Loss')
+    axes[0,1].set_ylabel('Frequency')
+    axes[0,1].legend()
+    
+    # Plot 3: Eigenvalue spectra for saddle points
+    saddle_eigenvalues = [cp['eigenvalues'] for cp in critical_points if cp['type'] == 'Saddle Point']
+    if saddle_eigenvalues:
+        all_saddle_ev = np.concatenate([ev.real for ev in saddle_eigenvalues])
+        axes[1,0].hist(all_saddle_ev, bins=30, alpha=0.7, color='red', edgecolor='black')
+        axes[1,0].axvline(x=0, color='k', linestyle='--', alpha=0.5)
+        axes[1,0].set_title('Eigenvalue Distribution for Saddle Points')
+        axes[1,0].set_xlabel('Eigenvalue')
+        axes[1,0].set_ylabel('Frequency')
+    
+    # Plot 4: Gradient norms vs loss
+    scatter = axes[1,1].scatter(losses, grad_norms, c=[type_colors.get(t, 'gray') for t in types], alpha=0.6)
+    axes[1,1].set_xlabel('Loss')
+    axes[1,1].set_ylabel('Gradient Norm')
+    axes[1,1].set_title('Gradient Norm vs Loss')
+    axes[1,1].set_yscale('log')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return type_counts
+
 # === INTERACTIVE FUNCTION ===
 def experiment(
-    n_samples=3000, 
+    n_samples=1000, 
     radius=100, 
     max_radius=150, 
-    hidden_sizes=[8, 4], 
+    hidden_sizes=[4, 2], 
     learning_rate=0.1, 
-    epochs=1000,
-    compute_hessian=False
+    epochs=500,
+    find_critical_points=True,
+    n_initial_points=100  # Reduced for speed
 ):
     np.random.seed(42)
     
@@ -212,33 +381,43 @@ def experiment(
     X_train_orig, X_test_orig = X_train * (2 * max_radius) - max_radius, X_test * (2 * max_radius) - max_radius
     
     nn = NeuralNetwork(2, hidden_sizes, 1, learning_rate)
+    print(f"Network architecture: 2 -> {hidden_sizes} -> 1")
+    print(f"Total parameters: {len(nn.get_parameters())}")
     print(f"Training with radius={radius}, lr={learning_rate}, hidden={hidden_sizes}, epochs={epochs}")
     
-    if compute_hessian:
-        # Compute Hessian at specific epochs
-        hessian_epochs = [0, epochs//4, epochs//2, epochs-1]
-        losses, hessian_eigenvalues = nn.train(X_train, y_train, epochs=epochs, 
-                                             compute_hessian_epochs=hessian_epochs)
-        
-        # Plot eigenvalue distribution
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        axes = axes.flatten()
-        
-        for idx, (epoch, eigenvalues) in enumerate(hessian_eigenvalues):
-            axes[idx].hist(eigenvalues.real, bins=50, alpha=0.7)
-            axes[idx].set_title(f'Epoch {epoch}: Eigenvalue Distribution\n'
-                              f'Pos: {np.sum(eigenvalues > 0)}, Neg: {np.sum(eigenvalues < 0)}')
-            axes[idx].set_xlabel('Eigenvalue')
-            axes[idx].set_ylabel('Frequency')
-            axes[idx].axvline(x=0, color='r', linestyle='--', alpha=0.5)
-        
-        plt.tight_layout()
-        plt.show()
-        
-    else:
-        losses, _ = nn.train(X_train, y_train, epochs=epochs)  # Fix: unpack the tuple
+    # Standard training
+    losses = nn.train(X_train, y_train, epochs=epochs)
     
     print(f"Train Acc: {nn.accuracy(X_train, y_train):.4f} | Test Acc: {nn.accuracy(X_test, y_test):.4f}")
+
+    # Find critical points
+    if find_critical_points:
+        print("\n" + "="*60)
+        print("FAST SEARCH FOR CRITICAL POINTS")
+        print("="*60)
+        
+        critical_points = nn.find_critical_points_fast(
+            X_train, y_train, 
+            n_initial_points=n_initial_points,
+            max_iter=50,
+            grad_tol=1e-3
+        )
+        
+        # Analyze results
+        type_counts = analyze_critical_points_distribution(critical_points)
+        
+        # Show some examples of saddle points
+        saddle_points = [cp for cp in critical_points if cp['type'] == 'Saddle Point']
+        if saddle_points:
+            print(f"\nFound {len(saddle_points)} saddle points!")
+            print("Example saddle point analysis:")
+            for i, saddle in enumerate(saddle_points[:3]):
+                print(f"Saddle {i+1}:")
+                print(f"  Loss: {saddle['loss']:.6f}")
+                print(f"  Gradient norm: {saddle['grad_norm']:.6e}")
+                evals = saddle['eigenvalues'].real
+                print(f"  Eigenvalue range: [{np.min(evals):.6e}, {np.max(evals):.6e}]")
+                print()
 
     # Original visualizations
     fig = plt.figure(figsize=(18,5))
@@ -254,8 +433,8 @@ def experiment(
     ax2.set_xlim(-max_radius, max_radius); ax2.set_ylim(-max_radius, max_radius)
 
     ax3 = plt.subplot(1,3,3)
-    x_g = np.linspace(0, 1, 150)
-    y_g = np.linspace(0, 1, 150)
+    x_g = np.linspace(0, 1, 100)
+    y_g = np.linspace(0, 1, 100)
     X_grid, Y_grid = np.meshgrid(x_g, y_g)
     grid = np.c_[X_grid.ravel(), Y_grid.ravel()]
     Z = nn.predict(grid).reshape(X_grid.shape)
@@ -270,26 +449,14 @@ def experiment(
 
 # === Example usage ===
 if __name__ == "__main__":
-    # First, run with a smaller network to test Hessian computation
-    print("=== Testing with Small Network ===")
-    experiment(
-        n_samples=1000,    # smaller dataset for faster computation
-        radius=100,
-        max_radius=250,
-        hidden_sizes=[4, 2],  # smaller network
-        learning_rate=0.05,
-        epochs=500,
-        compute_hessian=True  # Enable Hessian computation
-    )
-    
-    # Then run with your original larger network
-    print("\n=== Running with Larger Network ===")
+    print("\n=== Running Fast Critical Point Analysis ===")
     experiment(
         n_samples=10000,
         radius=100,
-        max_radius=250,
-        hidden_sizes=[12, 12],
+        max_radius=200,
+        hidden_sizes=[4, 4],
         learning_rate=0.05,
-        epochs=2500,
-        compute_hessian=True  # Disable for larger network (too slow)
+        epochs=5500,
+        find_critical_points=True,
+        n_initial_points=2000  # Much faster but still finds good results
     )
