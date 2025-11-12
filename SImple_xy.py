@@ -283,27 +283,43 @@ def experiment(
     if find_critical_points:
         critical_points = nn.find_critical_points_fast(X_train, y_train, n_initial_points=n_initial_points)
         print(f"\nFound {len(critical_points)} unique critical points.")
-        if critical_points:
-            df = pd.DataFrame([{
-                'type': cp['type'],
-                'min_eigen': cp['min_eigen'],
-                'max_eigen': cp['max_eigen'],
-                'grad_norm': cp['grad_norm'],
-                'loss': cp['loss'],
-                'parameters': cp['parameters'].tolist()
-            } for cp in critical_points])
-            df.to_csv("critical_points.csv", index=False)
-            print("\nSaved unique critical point data to 'critical_points.csv'.")
 
-            # === Frequency bar chart ===
-            freq = df['type'].value_counts()
-            plt.figure(figsize=(6,4))
-            plt.bar(freq.index, freq.values, color='skyblue')
-            plt.title("Frequency of Critical Point Types")
-            plt.xlabel("Critical Point Type")
-            plt.ylabel("Count")
-            plt.tight_layout()
-            plt.show()
+        records = [{
+            'type': cp['type'],
+            'min_eigen': cp['min_eigen'],
+            'max_eigen': cp['max_eigen'],
+            'grad_norm': cp['grad_norm'],
+            'loss': cp['loss'],
+            'parameters': cp['parameters'].tolist()
+        } for cp in critical_points]
+
+        # === Add final trained model parameters as "Final Destination" ===
+        final_params = nn.get_parameters()
+        final_loss = nn.compute_loss_from_params(final_params, X_train, y_train)
+        records.append({
+            'type': 'Final Destination',
+            'min_eigen': np.nan,
+            'max_eigen': np.nan,
+            'grad_norm': np.nan,
+            'loss': final_loss,
+            'parameters': final_params.tolist()
+        })
+
+        # Save all to CSV
+        df = pd.DataFrame(records)
+        df.to_csv("critical_points.csv", index=False)
+        print("\nSaved critical points + final destination to 'critical_points.csv'.")
+
+        # === Frequency bar chart ===
+        freq = df['type'].value_counts()
+        plt.figure(figsize=(6,4))
+        plt.bar(freq.index, freq.values, color='skyblue')
+        plt.title("Frequency of Critical Point Types (Including Final Destination)")
+        plt.xlabel("Critical Point Type")
+        plt.ylabel("Count")
+        plt.tight_layout()
+        plt.show()
+
 
     plt.figure(figsize=(6,4))
     plt.plot(losses)
@@ -321,8 +337,8 @@ if __name__ == "__main__":
         n_samples=2000,
         radius=50,
         max_radius=100,
-        hidden_sizes=[4,4],
-        learning_rate=0.05,
+        hidden_sizes=[12,12],
+        learning_rate=0.01,
         epochs=5500,
         find_critical_points=True,
         n_initial_points=200
