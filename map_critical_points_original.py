@@ -33,14 +33,14 @@ saddle_info = pd.DataFrame({
     "min_distance": min_dist_val,
     "saddle_loss": saddle_losses
 })
-closest_saddles = saddle_info.nsmallest(10, "min_distance")  # Top 5 closest
+closest_saddles = saddle_info.nsmallest(5, "min_distance")  # Top 5 closest
 
 print("Top 5 closest saddles to trajectory:")
 print(closest_saddles)
 
 # === 3D Visualization Functions ===
 
-def create_saddle_3d_trajectory(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, window=50, saddle_idx=0):
+def create_saddle_3d_trajectory(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, window=10, saddle_idx=0):
     """
     Create a 3D visualization of the trajectory navigating around a saddle point using actual loss
     
