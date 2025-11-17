@@ -33,48 +33,32 @@ saddle_info = pd.DataFrame({
     "min_distance": min_dist_val,
     "saddle_loss": saddle_losses
 })
-closest_saddles = saddle_info.nsmallest(10, "min_distance")  # Top 5 closest
+closest_saddles = saddle_info.nsmallest(10, "min_distance")  # Top 10 closest
 
-print("Top 5 closest saddles to trajectory:")
+print("Top 10 closest saddles to trajectory:")
 print(closest_saddles)
 
 # === 3D Visualization Functions ===
 
-def create_saddle_3d_trajectory(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, window=50, saddle_idx=0):
+def create_saddle_3d_trajectory(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, saddle_idx=0):
     """
     Create a 3D visualization of the trajectory navigating around a saddle point using actual loss
-    
-    Parameters:
-    -----------
-    window : int
-        The number of trajectory steps to show before and after the closest point to the saddle.
-        This creates a segment of length 2*window + 1 (if within bounds).
-        A larger window shows more context but may include irrelevant parts of the trajectory.
-        A smaller window focuses on the immediate navigation around the saddle point.
+    Shows the entire trajectory with closest approach point marked
     """
-    # Get local trajectory segment
-    lo = max(0, closest_step - window)
-    hi = min(len(trajectory_points), closest_step + window)
-    local_traj = trajectory_points[lo:hi]
-    local_losses = trajectory_losses[lo:hi]
-    
-    # Center trajectory around saddle
-    traj_centered = local_traj - saddle_params
-    
-    # Use PCA on local trajectory to find meaningful directions
+    # Use PCA on entire trajectory to find meaningful directions
     from sklearn.decomposition import PCA
     pca = PCA(n_components=3)
-    traj_proj = pca.fit_transform(traj_centered)
+    traj_proj = pca.fit_transform(trajectory_points)
     
     # Create separate figure window
-    fig = plt.figure(figsize=(10, 8))
+    fig = plt.figure(figsize=(12, 9))
     
     # Plot 3D trajectory with actual loss coloring
     ax = fig.add_subplot(111, projection='3d')
     
-    # Color by actual loss values
+    # Color by actual loss values for entire trajectory
     scatter = ax.scatter(traj_proj[:, 0], traj_proj[:, 1], traj_proj[:, 2], 
-                         c=local_losses, cmap='viridis', s=40, alpha=0.8, 
+                         c=trajectory_losses, cmap='viridis', s=20, alpha=0.6, 
                          label='Trajectory Points')
     
     # Add colorbar for loss values
@@ -85,35 +69,39 @@ def create_saddle_3d_trajectory(saddle_params, saddle_loss, trajectory_points, t
     ax.plot(traj_proj[:, 0], traj_proj[:, 1], traj_proj[:, 2], 
              'gray', alpha=0.3, linewidth=1, label='Trajectory Path')
     
-    # Mark key points
-    ax.scatter(0, 0, 0, color='red', s=200, marker='*', 
-               label=f'Saddle (loss: {saddle_loss:.4f})', edgecolors='black', linewidth=2)
+    # Mark key points on entire trajectory
     ax.scatter(traj_proj[0, 0], traj_proj[0, 1], traj_proj[0, 2], 
                 color='green', s=120, marker='s', 
-                label='Segment Start', edgecolors='black')
+                label='Trajectory Start', edgecolors='black')
     ax.scatter(traj_proj[-1, 0], traj_proj[-1, 1], traj_proj[-1, 2], 
                 color='orange', s=120, marker='^', 
-                label='Segment End', edgecolors='black')
+                label='Trajectory End', edgecolors='black')
+    
+    # Mark closest approach point with special marker
+    closest_point_proj = traj_proj[closest_step]
+    closest_loss = trajectory_losses[closest_step]
+    ax.scatter(closest_point_proj[0], closest_point_proj[1], closest_point_proj[2], 
+                color='red', s=200, marker='*', 
+                edgecolors='black', linewidth=2, 
+                label=f'Closest Approach (loss: {closest_loss:.4f})')
     
     ax.set_xlabel('PC1 (Maximum Variance Direction)')
     ax.set_ylabel('PC2 (Second Maximum Variance)')
     ax.set_zlabel('PC3 (Third Maximum Variance)')
-    ax.set_title(f'Saddle {saddle_idx}: 3D Trajectory Navigation\n'
-                f'Saddle Loss: {saddle_loss:.4f}, Min Distance: {np.min(np.linalg.norm(traj_centered, axis=1)):.2e}\n'
-                f'Window: {window} steps around closest point', 
+    ax.set_title(f'Saddle {saddle_idx}: Entire Trajectory Navigation\n'
+                f'Saddle Loss: {saddle_loss:.4f}, Min Distance: {np.min(dists[saddle_idx]):.2e}', 
                 fontsize=12, pad=20)
     
     # Enhanced legend
     ax.legend(loc='upper left', bbox_to_anchor=(0, 1), framealpha=0.9)
     
     # Add explanatory text
-    explanation = (f"Window Explanation:\n"
-                  f"• Shows {window} steps before & after closest point\n"
-                  f"• Total segment: {len(local_traj)} steps\n"
+    explanation = (f"Global Closest Approach Analysis:\n"
+                  f"• Shows ENTIRE training trajectory\n"
                   f"• Colors: Actual loss values\n"
-                  f"• Red Star: Saddle point\n" 
-                  f"• Green Square: Segment start\n"
-                  f"• Orange Triangle: Segment end")
+                  f"• Red Star: Point of closest approach\n" 
+                  f"• Green Square: Trajectory start\n"
+                  f"• Orange Triangle: Trajectory end")
     
     ax.text2D(0.02, 0.02, explanation, transform=ax.transAxes, 
               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
@@ -127,12 +115,7 @@ def create_saddle_3d_trajectory(saddle_params, saddle_loss, trajectory_points, t
 def create_velocity_vectors(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, window=50, saddle_idx=0):
     """
     Create velocity vector visualization with actual loss coloring
-    
-    Parameters:
-    -----------
-    window : int
-        The number of trajectory steps to show before and after the closest point to the saddle.
-        This creates a focused view of how the trajectory moves around the saddle point.
+    Focused local view around the saddle point
     """
     # Get local trajectory segment
     lo = max(0, closest_step - window)
@@ -182,15 +165,25 @@ def create_velocity_vectors(saddle_params, saddle_loss, trajectory_points, traje
                label=f'Saddle (loss: {saddle_loss:.4f})', edgecolors='black')
     ax.scatter(traj_proj[0, 0], traj_proj[0, 1], traj_proj[0, 2], 
                 color='darkgreen', s=120, marker='s', 
-                label='Start', edgecolors='black')
+                label='Segment Start', edgecolors='black')
     ax.scatter(traj_proj[-1, 0], traj_proj[-1, 1], traj_proj[-1, 2], 
                 color='darkorange', s=120, marker='^', 
-                label='End', edgecolors='black')
+                label='Segment End', edgecolors='black')
+    
+    # Mark closest approach point in local window
+    local_closest_idx = closest_step - lo
+    if 0 <= local_closest_idx < len(traj_proj):
+        closest_local_point = traj_proj[local_closest_idx]
+        closest_local_loss = local_losses[local_closest_idx]
+        ax.scatter(closest_local_point[0], closest_local_point[1], closest_local_point[2], 
+                   color='yellow', s=180, marker='D', 
+                   edgecolors='black', linewidth=2,
+                   label=f'Closest Approach (loss: {closest_local_loss:.4f})')
     
     ax.set_xlabel('PC1 Direction')
     ax.set_ylabel('PC2 Direction')
     ax.set_zlabel('PC3 Direction')
-    ax.set_title(f'Saddle {saddle_idx}: Velocity Vector Field\n'
+    ax.set_title(f'Saddle {saddle_idx}: Local Velocity Field\n'
                 f'Saddle Loss: {saddle_loss:.4f}, Window: {window} steps', 
                 fontsize=12, pad=20)
     
@@ -202,7 +195,7 @@ def create_velocity_vectors(saddle_params, saddle_loss, trajectory_points, traje
     max_speed = np.max(vel_magnitudes)
     min_speed = np.min(vel_magnitudes)
     
-    speed_info = (f"Window: {window} steps around closest point\n"
+    speed_info = (f"Local Window: {window} steps around closest point\n"
                   f"Speed Statistics:\n"
                   f"• Average: {avg_speed:.2e}\n"
                   f"• Maximum: {max_speed:.2e}\n"
@@ -219,15 +212,71 @@ def create_velocity_vectors(saddle_params, saddle_loss, trajectory_points, traje
     
     return fig
 
-def create_distance_plot(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, window=50, saddle_idx=0):
+def create_global_distance_plot(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, saddle_idx=0):
     """
-    Create distance from saddle plot with actual loss overlay
+    Create distance from saddle plot with actual loss overlay for ENTIRE trajectory
+    Shows global closest approach
+    """
+    # Calculate distances for entire trajectory
+    traj_centered = trajectory_points - saddle_params
+    distances = np.linalg.norm(traj_centered, axis=1)
+    steps = np.arange(len(distances))
     
-    Parameters:
-    -----------
-    window : int
-        The number of trajectory steps to show before and after the closest point to the saddle.
-        This defines the analysis window for studying how the trajectory approaches and leaves the saddle.
+    # Create separate figure window
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
+    
+    # Plot 1: Global distance over entire trajectory
+    ax1.plot(steps, distances, 'b-', linewidth=2.5, label='Distance from saddle')
+    ax1.axhline(y=0, color='red', linestyle='--', alpha=0.7, linewidth=1.5, 
+                label='Saddle position (zero)')
+    
+    # Mark the closest point (global minimum)
+    ax1.scatter(closest_step, distances[closest_step], 
+                color='red', s=200, zorder=5, marker='*',
+                label=f'Global Closest Approach (step {closest_step})')
+    
+    # Mark start and end of entire trajectory
+    ax1.scatter(0, distances[0], color='green', s=100, marker='s', 
+                label='Trajectory Start')
+    ax1.scatter(len(distances)-1, distances[-1], color='orange', s=100, marker='^', 
+                label='Trajectory End')
+    
+    ax1.set_xlabel('Step in Entire Trajectory')
+    ax1.set_ylabel('Distance from Saddle')
+    ax1.set_title(f'Saddle {saddle_idx}: Global Distance Analysis\n'
+                 f'Saddle Loss: {saddle_loss:.4f}, Min Distance: {distances[closest_step]:.2e}', fontsize=12)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Actual loss over entire trajectory
+    ax2.plot(steps, trajectory_losses, 'purple', linewidth=2.5, label='Actual Loss')
+    ax2.axhline(y=saddle_loss, color='red', linestyle='--', alpha=0.7, linewidth=1.5,
+                label=f'Saddle loss: {saddle_loss:.4f}')
+    
+    # Mark key points on loss plot
+    ax2.scatter(closest_step, trajectory_losses[closest_step], 
+                color='red', s=200, zorder=5, marker='*',
+                label=f'Closest Approach Loss: {trajectory_losses[closest_step]:.4f}')
+    ax2.scatter(0, trajectory_losses[0], color='green', s=100, marker='s', 
+                label=f'Start loss: {trajectory_losses[0]:.4f}')
+    ax2.scatter(len(trajectory_losses)-1, trajectory_losses[-1], color='orange', s=100, marker='^', 
+                label=f'End loss: {trajectory_losses[-1]:.4f}')
+    
+    ax2.set_xlabel('Step in Entire Trajectory')
+    ax2.set_ylabel('Actual Loss')
+    ax2.set_title('Actual Loss Values Along Entire Trajectory', fontsize=12)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fig
+
+def create_local_speed_analysis(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, window=50, saddle_idx=0):
+    """
+    Create LOCAL speed analysis in separate window
+    Focuses only on speed around the closest approach point
     """
     # Get local trajectory segment
     lo = max(0, closest_step - window)
@@ -235,95 +284,101 @@ def create_distance_plot(saddle_params, saddle_loss, trajectory_points, trajecto
     local_traj = trajectory_points[lo:hi]
     local_losses = trajectory_losses[lo:hi]
     
-    # Center trajectory around saddle
+    # Calculate distances and speeds in local window
     traj_centered = local_traj - saddle_params
-    
-    # Calculate distances and get loss values
     distances = np.linalg.norm(traj_centered, axis=1)
-    steps = np.arange(len(distances))
+    local_steps = np.arange(len(distances))
     
-    # Create separate figure window
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10))
+    # Calculate speed (derivative of distance)
+    if len(distances) > 1:
+        speed = np.abs(np.diff(distances))
+        speed_steps = local_steps[:-1] + 0.5  # Center between distance points
+    else:
+        speed = np.array([0])
+        speed_steps = local_steps
     
-    # Plot 1: Distance over time
-    ax1.plot(steps, distances, 'b-', linewidth=2.5, label='Distance from saddle')
+    # Create separate figure window for speed analysis
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+    
+    # Plot 1: Distance in local window
+    ax1.plot(local_steps, distances, 'b-', linewidth=2.5, label='Distance from saddle')
     ax1.axhline(y=0, color='red', linestyle='--', alpha=0.7, linewidth=1.5, 
                 label='Saddle position (zero)')
     
-    # Mark the closest point
-    closest_local_idx = np.argmin(distances)
-    ax1.scatter(closest_local_idx, distances[closest_local_idx], 
-                color='red', s=150, zorder=5, label=f'Closest point (step {closest_local_idx})')
+    # Mark the closest point in local window
+    local_closest_idx = closest_step - lo
+    ax1.scatter(local_closest_idx, distances[local_closest_idx], 
+                color='red', s=200, zorder=5, marker='*',
+                label=f'Closest Approach (step {local_closest_idx})')
     
-    # Mark start and end
+    # Mark start and end of local segment
     ax1.scatter(0, distances[0], color='green', s=100, marker='s', 
-                label='Segment start')
+                label='Segment Start')
     ax1.scatter(len(distances)-1, distances[-1], color='orange', s=100, marker='^', 
-                label='Segment end')
+                label='Segment End')
     
-    ax1.set_xlabel('Step in Local Trajectory')
+    ax1.set_xlabel('Step in Local Window')
     ax1.set_ylabel('Distance from Saddle')
-    ax1.set_title(f'Saddle {saddle_idx}: Distance from Saddle Over Time\n'
-                 f'Saddle Loss: {saddle_loss:.4f}, Window: {window} steps', fontsize=12)
+    ax1.set_title(f'Saddle {saddle_idx}: Local Distance Analysis\nWindow: {window} steps around closest approach', fontsize=12)
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Plot 2: Actual loss over time
-    ax2.plot(steps, local_losses, 'purple', linewidth=2.5, label='Actual Loss')
-    ax2.axhline(y=saddle_loss, color='red', linestyle='--', alpha=0.7, linewidth=1.5,
-                label=f'Saddle loss: {saddle_loss:.4f}')
-    
-    # Mark key points on loss plot
-    ax2.scatter(closest_local_idx, local_losses[closest_local_idx], 
-                color='red', s=150, zorder=5, label=f'Closest point loss: {local_losses[closest_local_idx]:.4f}')
-    ax2.scatter(0, local_losses[0], color='green', s=100, marker='s', 
-                label=f'Start loss: {local_losses[0]:.4f}')
-    ax2.scatter(len(local_losses)-1, local_losses[-1], color='orange', s=100, marker='^', 
-                label=f'End loss: {local_losses[-1]:.4f}')
-    
-    ax2.set_xlabel('Step in Local Trajectory')
-    ax2.set_ylabel('Actual Loss')
-    ax2.set_title('Actual Loss Values Along Trajectory', fontsize=12)
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    # Plot 3: Speed (derivative of distance)
-    if len(distances) > 1:
-        speed = np.abs(np.diff(distances))
-        speed_steps = steps[:-1] + 0.5  # Center between distance points
+    # Plot 2: Speed analysis (main focus)
+    if len(speed) > 0:
+        ax2.plot(speed_steps, speed, 'teal', linewidth=3, label='Movement Speed', marker='o', markersize=4)
         
-        ax3.plot(speed_steps, speed, 'teal', linewidth=2, label='Absolute speed')
-        ax3.axhline(y=np.mean(speed), color='teal', linestyle='--', alpha=0.7,
-                   label=f'Average speed: {np.mean(speed):.2e}')
+        # Mark speed at closest approach
+        if local_closest_idx < len(speed_steps):
+            closest_speed = speed[local_closest_idx] if local_closest_idx < len(speed) else 0
+            ax2.scatter(speed_steps[local_closest_idx], closest_speed, 
+                       color='red', s=200, zorder=5, marker='*',
+                       label=f'Speed at Closest Approach: {closest_speed:.2e}')
         
-        # Mark slow regions
-        low_speed_threshold = np.mean(speed) * 0.5
-        low_speed_regions = speed < low_speed_threshold
+        # Mark average speed
+        avg_speed = np.mean(speed)
+        ax2.axhline(y=avg_speed, color='teal', linestyle='--', alpha=0.7,
+                   label=f'Average Speed: {avg_speed:.2e}')
+        
+        # Mark slow regions (speed below 50% of average)
+        slow_threshold = avg_speed * 0.5
+        slow_regions = speed < slow_threshold
         
         start_idx = None
         slow_region_label_added = False
         
-        for i in range(1, len(low_speed_regions)):
-            if low_speed_regions[i] and not low_speed_regions[i-1]:
+        for i in range(1, len(slow_regions)):
+            if slow_regions[i] and not slow_regions[i-1]:
                 start_idx = i
-            elif not low_speed_regions[i] and low_speed_regions[i-1] and start_idx is not None:
-                label = 'Slow regions' if not slow_region_label_added else ""
-                ax3.axvspan(speed_steps[start_idx], speed_steps[i], 
+            elif not slow_regions[i] and slow_regions[i-1] and start_idx is not None:
+                label = 'Slow Regions (<50% avg speed)' if not slow_region_label_added else ""
+                ax2.axvspan(speed_steps[start_idx], speed_steps[i], 
                            alpha=0.2, color='red', label=label)
                 if not slow_region_label_added:
                     slow_region_label_added = True
                 start_idx = None
         
-        if start_idx is not None and low_speed_regions[-1]:
-            label = 'Slow regions' if not slow_region_label_added else ""
-            ax3.axvspan(speed_steps[start_idx], speed_steps[-1], 
+        if start_idx is not None and slow_regions[-1]:
+            label = 'Slow Regions (<50% avg speed)' if not slow_region_label_added else ""
+            ax2.axvspan(speed_steps[start_idx], speed_steps[-1], 
                        alpha=0.2, color='red', label=label)
     
-    ax3.set_xlabel('Step in Local Trajectory')
-    ax3.set_ylabel('Speed (|Δdistance|)')
-    ax3.set_title('Movement Speed Around Saddle', fontsize=12)
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
+    ax2.set_xlabel('Step in Local Window')
+    ax2.set_ylabel('Speed (|Δdistance|)')
+    ax2.set_title('LOCAL SPEED ANALYSIS: Movement Speed Around Saddle', fontsize=12)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Add speed statistics
+    if len(speed) > 0:
+        stats_text = (f"Speed Statistics (Local Window):\n"
+                     f"• At Closest Approach: {closest_speed:.2e}\n"
+                     f"• Average: {np.mean(speed):.2e}\n"
+                     f"• Maximum: {np.max(speed):.2e}\n"
+                     f"• Minimum: {np.min(speed):.2e}")
+        
+        ax2.text(0.02, 0.98, stats_text, transform=ax2.transAxes,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+                fontsize=10, verticalalignment='top')
     
     plt.tight_layout()
     plt.show()
@@ -333,12 +388,7 @@ def create_distance_plot(saddle_params, saddle_loss, trajectory_points, trajecto
 def create_energy_landscape_3d(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, window=30, saddle_idx=0):
     """
     Create a 3D energy landscape visualization using actual loss values
-    
-    Parameters:
-    -----------
-    window : int
-        The number of trajectory steps to show before and after the closest point to the saddle.
-        Used to create a focused view of the loss landscape around the saddle region.
+    Local view around the saddle
     """
     # Get local trajectory
     lo = max(0, closest_step - window)
@@ -386,6 +436,7 @@ def create_energy_landscape_3d(saddle_params, saddle_loss, trajectory_points, tr
                          edgecolors='black', linewidth=0.5, label='Trajectory Points')
     
     # Mark key points
+    local_closest_idx = closest_step - lo
     ax1.scatter(traj_2d[0, 0], traj_2d[0, 1], local_losses[0], 
                 color='lime', s=120, marker='s', edgecolors='black',
                 label=f'Start (loss: {local_losses[0]:.4f})')
@@ -395,10 +446,18 @@ def create_energy_landscape_3d(saddle_params, saddle_loss, trajectory_points, tr
     ax1.scatter(0, 0, saddle_loss, color='red', s=200, marker='*', 
                 edgecolors='black', linewidth=2, label=f'Saddle (loss: {saddle_loss:.4f})')
     
+    # Mark closest approach point
+    if 0 <= local_closest_idx < len(traj_2d):
+        closest_point_2d = traj_2d[local_closest_idx]
+        closest_loss_local = local_losses[local_closest_idx]
+        ax1.scatter(closest_point_2d[0], closest_point_2d[1], closest_loss_local,
+                   color='yellow', s=180, marker='D', edgecolors='black', linewidth=2,
+                   label=f'Closest Approach (loss: {closest_loss_local:.4f})')
+    
     ax1.set_xlabel('PC1 Direction')
     ax1.set_ylabel('PC2 Direction')
     ax1.set_zlabel('Actual Loss')
-    ax1.set_title(f'Saddle {saddle_idx}: 3D Loss Landscape\n(Window: {window} steps around saddle)', 
+    ax1.set_title(f'Saddle {saddle_idx}: Local Loss Landscape\n(Window: {window} steps)', 
                   fontsize=11)
     ax1.legend()
     
@@ -427,6 +486,12 @@ def create_energy_landscape_3d(saddle_params, saddle_loss, trajectory_points, tr
     ax2.scatter(0, 0, color='red', s=150, marker='*', 
                 edgecolors='black', label='Saddle')
     
+    # Mark closest approach point
+    if 0 <= local_closest_idx < len(traj_2d):
+        ax2.scatter(closest_point_2d[0], closest_point_2d[1], 
+                   color='yellow', s=150, marker='D', edgecolors='black', linewidth=2,
+                   label='Closest Approach')
+    
     ax2.set_xlabel('PC1 Direction')
     ax2.set_ylabel('PC2 Direction')
     ax2.set_title('Contour View with Trajectory\n(Colors show actual loss values)')
@@ -440,12 +505,11 @@ def create_energy_landscape_3d(saddle_params, saddle_loss, trajectory_points, tr
     return fig
 
 # === Main visualization execution ===
-print("Creating 3D visualizations of saddle navigation using ACTUAL LOSS values...")
-print("Window Parameter Explanation:")
-print("• 'window' defines how many trajectory steps to show before and after the closest point")
-print("• Larger window = more context but potentially less focused")
-print("• Smaller window = focused view of immediate saddle navigation")
-print("• Default: 50 steps for trajectory views, 30 steps for landscape views")
+print("Creating comprehensive saddle navigation visualizations...")
+print("Analysis Strategy:")
+print("• Global Analysis: Entire trajectory with closest approach marked")
+print("• Local Analysis: Window around saddle for detailed behavior")
+print("• Speed Analysis: Separate window focusing only on movement speed")
 print()
 
 # Generate visualizations for each closest saddle
@@ -461,19 +525,23 @@ for i, (idx, row) in enumerate(closest_saddles.iterrows()):
     print(f"Closest trajectory step: {closest_step}")
     
     # Each visualization in separate window
-    print("1. Creating 3D trajectory plot with actual loss...")
+    print("1. Creating GLOBAL 3D trajectory plot (entire trajectory)...")
     create_saddle_3d_trajectory(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, 
-                               window=50, saddle_idx=saddle_idx)
+                               saddle_idx=saddle_idx)
     
-    print("2. Creating velocity vector plot with actual loss...")
+    print("2. Creating LOCAL velocity vector plot...")
     create_velocity_vectors(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, 
                            window=50, saddle_idx=saddle_idx)
     
-    print("3. Creating distance analysis plot with actual loss...")
-    create_distance_plot(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, 
-                        window=50, saddle_idx=saddle_idx)
+    print("3. Creating GLOBAL distance analysis (entire trajectory)...")
+    create_global_distance_plot(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, 
+                        saddle_idx=saddle_idx)
     
-    print("4. Creating energy landscape plot with actual loss...")
+    print("4. Creating SEPARATE LOCAL SPEED ANALYSIS window...")
+    create_local_speed_analysis(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, 
+                              window=50, saddle_idx=saddle_idx)
+    
+    print("5. Creating energy landscape plot...")
     create_energy_landscape_3d(saddle_params, saddle_loss, trajectory_points, trajectory_losses, closest_step, 
                               window=30, saddle_idx=saddle_idx)
     
@@ -481,7 +549,8 @@ for i, (idx, row) in enumerate(closest_saddles.iterrows()):
 
 print("=== All visualizations completed ===")
 print("Summary:")
-print(f"• Analyzed top 5 closest saddles to the training trajectory")
-print("• Each visualization uses ACTUAL LOSS VALUES from the critical points and trajectory data")
-print("• Window parameter controls the focused view around each saddle point")
-print("• Different window sizes used for different visualization types (50 for trajectories, 30 for landscapes)")
+print(f"• Analyzed top 10 closest saddles to the training trajectory")
+print("• Global analysis shows closest approach over entire trajectory")
+print("• Local analysis provides detailed view around each saddle")
+print("• Separate speed analysis focuses on movement dynamics")
+print("• All visualizations use ACTUAL LOSS VALUES")
